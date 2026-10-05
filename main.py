@@ -1,44 +1,100 @@
 import os
-import time
+import re
 import telebot
-from dotenv import load_dotenv
-from commands import register_commands
 
-# Load environment variables
-load_dotenv()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+bot = telebot.TeleBot(TOKEN)
 
-# Replace 'TELEGRAM_BOT_TOKEN' with the token you received from BotFather
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-try:
-    bot = telebot.TeleBot(TOKEN)
-    register_commands(bot)
+# Contas ficam separadas por grupo
+contas = {}
 
-    @bot.message_handler(commands=['start', 'hello'])
-    def send_welcome(message):
-        """
-        Handle '/start' and '/hello' commands.
+def dinheiro(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-        Args:
-            message (telebot.types.Message): The message object.
-        """
-        bot.reply_to(message, "Hello! I'm a simple Telegram bot.")
+@bot.message_handler(commands=["start"])
+def start(message):
+    bot.reply_to(
+        message,
+        "💰 Bot de Contas da Casa funcionando!\n\n"
+        "Para adicionar uma conta, mande assim:\n"
+        "Luz 250\n"
+        "Internet 119,90\n"
+        "Escola 800\n\n"
+        "Comandos:\n"
+        "/total - mostra o total\n"
+        "/lista - mostra todas as contas\n"
+        "/limpar - apaga a lista"
+    )
 
-    @bot.message_handler(func=lambda msg: True)
-    def echo_all(message):
-        """
-        Echo all incoming text messages back to the user.
+@bot.message_handler(commands=["total"])
+def total(message):
+    chat_id = message.chat.id
+    lista = contas.get(chat_id, [])
+    soma = sum(valor for _, valor in lista)
 
-        Args:
-            message (telebot.types.Message): The message object.
-        """
-        bot.reply_to(message, message.text)
+    bot.reply_to(
+        message,
+        f"💰 Total das contas: {dinheiro(soma)}"
+    )
 
-    # Remove webhook to avoid conflicts with polling
-    bot.delete_webhook(drop_pending_updates=True)
-    bot.polling()
+@bot.message_handler(commands=["lista"])
+def lista(message):
+    chat_id = message.chat.id
+    itens = contas.get(chat_id, [])
 
-except Exception as e:
-    print(f"CRITICAL ERROR: Failed to initialize bot with provided token. Error: {e}")
-    print("The application will hang to prevent a restart loop. Please fix the TELEGRAM_BOT_TOKEN environment variable.")
-    while True:
-        time.sleep(3600)
+    if not itens:
+        bot.reply_to(message, "📭 Nenhuma conta cadastrada.")
+        return
+
+    texto = "📋 CONTAS DA CASA\n\n"
+
+    for i, (nome, valor) in enumerate(itens, 1):
+        texto += f"{i}. {nome}: {dinheiro(valor)}\n"
+
+    soma = sum(valor for _, valor in itens)
+    texto += f"\n💰 TOTAL: {dinheiro(soma)}"
+
+    bot.reply_to(message, texto)
+
+@bot.message_handler(commands=["limpar"])
+def limpar(message):
+    contas[message.chat.id] = []
+    bot.reply_to(message, "🗑️ Lista de contas apagada.")
+
+@bot.message_handler(func=lambda message: True, content_types=["text"])
+def adicionar(message):
+    texto = message.text.strip()
+
+    resultado = re.match(r"^(.+?)\s+R?\$?\s*(\d+(?:[.,]\d{1,2})?)$", texto)
+
+    if not resultado:
+        bot.reply_to(
+            message,
+            "Não consegui entender. 😅\n"
+            "Envie assim:\n\n"
+            "Luz 250\n"
+            "ou\n"
+            "Internet 119,90"
+        )
+        return
+
+    nome = resultado.group(1).strip()
+    valor = float(resultado.group(2).replace(",", "."))
+
+    chat_id = message.chat.id
+
+    if chat_id not in contas:
+        contas[chat_id] = []
+
+    contas[chat_id].append((nome, valor))
+
+    soma = sum(v for _, v in contas[chat_id])
+
+    bot.reply_to(
+        message,
+        f"✅ {nome}: {dinheiro(valor)} adicionada.\n"
+        f"💰 Total acumulado: {dinheiro(soma)}"
+    )
+
+print("Bot iniciado!")
+bot.infinity_polling(skip_pending=True)
